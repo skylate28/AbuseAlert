@@ -2,80 +2,113 @@ import streamlit as st
 import pandas as pd
 import time
 from datetime import datetime
+import plotly.express as px
 
-# Konfigurasi Halaman
-st.set_page_config(page_title="Prototype Truck Abuse CK", layout="wide")
+# Konfigurasi Tema & Layout
+st.set_page_config(page_title="CK Monitoring Dashboard", layout="wide", initial_sidebar_state="collapsed")
 
-# Judul Utama
-st.title("🚜 Truck Abuse Alert System (Excel Prototype)")
+# Custom CSS untuk gaya Dark Mode & Card
+st.markdown("""
+    <style>
+    .main { background-color: #0e1117; }
+    .stMetric { background-color: #161b22; border-radius: 10px; padding: 15px; border: 1px solid #30363d; }
+    .alert-card {
+        background-color: #1f2937;
+        color: white;
+        padding: 15px;
+        border-radius: 8px;
+        margin-bottom: 10px;
+        border-left: 5px solid #ef4444;
+        transition: 0.3s;
+    }
+    .alert-card:hover { background-color: #374151; }
+    .unit-tag { background-color: #3b82f6; color: white; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
+    .type-tag { background-color: #9333ea; color: white; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
+    </style>
+    """, unsafe_allow_html=True)
 
-# 1. Fungsi Load Data Excel
 @st.cache_data
-def load_excel_data():
-    # Ganti 'AbuseDummy.xlsx' dengan nama file excel yang Anda upload ke GitHub
-    file_path = 'AbuseDummy.xlsx' 
-    df = pd.read_excel(file_path)
-    
-    # Memastikan kolom tanggal dan waktu terbaca dengan benar
-    df['DATE'] = df['DATE'].astype(str)
-    df['SOURCETIMESTAMP'] = df['SOURCETIMESTAMP'].astype(str)
-    
-    # Sorting berdasarkan waktu terbaru
+def load_data():
+    # Pastikan nama file sesuai dengan yang Anda upload
+    df = pd.read_excel('AbuseDummy.xlsx')
     return df
 
 try:
-    all_data = load_excel_data()
+    data_all = load_data()
     
-    # Sidebar Control
-    st.sidebar.header("🕹️ Simulation Control")
-    sim_speed = st.sidebar.select_slider("Interval Update (Detik)", options=[1, 3, 5, 10], value=3)
-    start_sim = st.sidebar.button("Mulai Monitoring Simulasi")
+    # --- HEADER ---
+    col_t1, col_t2 = st.columns([3, 1])
+    with col_t1:
+        st.title("🎛️ Truck Abuse Central Monitoring")
+    with col_t2:
+        st.write(f"**System Status:** 🟢 Online")
+        st.write(f"**Server Time:** {datetime.now().strftime('%H:%M:%S')}")
 
-    # Placeholder untuk Alert agar bisa diupdate secara dinamis
-    alert_placeholder = st.empty()
+    # --- SIDEBAR CONTROLS ---
+    st.sidebar.header("Settings")
+    sim_active = st.sidebar.toggle("Start Live Monitoring", value=False)
+    interval = st.sidebar.select_slider("Refresh Rate (s)", options=[1, 2, 5], value=2)
 
-    if start_sim:
-        # Simulasi menampilkan data dari baris paling bawah (asumsi data terbaru) ke atas
-        displayed_alerts = []
-        
-        # Mengambil 30 data sampel untuk simulasi
-        sample_data = all_data.tail(30).iloc[::-1] 
+    # --- TOP METRICS ---
+    m1, m2, m3, m4 = st.columns(4)
+    total_event = len(data_all)
+    critical_event = len(data_all[data_all['SVRTY'] == 2])
+    unique_trucks = data_all['MACHINE'].nunique()
+    
+    m1.metric("Total Violations", total_event)
+    m2.metric("Critical (Svrty 2)", critical_event, delta_color="inverse")
+    m3.metric("Units Monitored", unique_trucks)
+    m4.metric("Active Area", data_all['AREA'].iloc[0])
 
-        for index, row in sample_data.iterrows():
-            displayed_alerts.insert(0, row)
+    # --- MAIN CONTENT ---
+    left_col, right_col = st.columns([2, 1])
+
+    with left_col:
+        st.subheader("📍 Live Position Log (UTM Map)")
+        # Visualisasi koordinat menggunakan Plotly (karena UTM tidak bisa pakai st.map langsung)
+        fig = px.scatter(data_all.tail(50), x="LOCX", y="LOCY", 
+                         color="DESCRIPTION", hover_name="MACHINE",
+                         template="plotly_dark", color_discrete_sequence=px.colors.qualitative.Pastel)
+        fig.update_layout(margin=dict(l=0, r=0, t=0, b=0), showlegend=False)
+        st.plotly_chart(fig, use_container_width=True)
+
+    with right_col:
+        st.subheader("🔔 Violation Feed")
+        feed_placeholder = st.empty()
+
+    # --- SIMULATION LOGIC ---
+    if sim_active:
+        # Simulasi berjalan mundur dari data terbaru
+        for i in range(len(data_all)-1, 0, -1):
+            row = data_all.iloc[i]
             
-            with alert_placeholder.container():
-                st.markdown(f"### 🚨 Live Feed: {len(displayed_alerts)} Kejadian Terdeteksi")
-                
-                for alert in displayed_alerts:
-                    # Warna indikator Severity
-                    severity_color = "#FF4B4B" if alert['SVRTY'] == 2 else "#FFA500"
+            with feed_placeholder.container():
+                # Loop untuk menampilkan 5 alert terbaru saja di feed agar tidak penuh
+                for j in range(i, max(i-5, 0), -1):
+                    alert = data_all.iloc[j]
+                    border_color = "#ef4444" if alert['SVRTY'] == 2 else "#f59e0b"
                     
                     st.markdown(f"""
-                    <div style="border-left: 10px solid {severity_color}; background-color: #f9f9f9; padding: 15px; border-radius: 10px; margin-bottom: 12px; box-shadow: 2px 2px 5px rgba(0,0,0,0.05); color: black;">
-                        <div style="display: flex; justify-content: space-between;">
-                            <span style="font-weight: bold; font-size: 1.2em; color: {severity_color};">⚠️ {alert['DESCRIPTION']}</span>
-                            <span style="color: gray; font-size: 0.8em;">{alert['DATE']} | {alert['SOURCETIMESTAMP']}</span>
-                        </div>
-                        <div style="display: grid; grid-template-columns: 1fr 1fr; margin-top: 10px; font-size: 0.95em;">
-                            <div>
-                                <b>Nomor Unit:</b> {alert['MACHINE']}<br>
-                                <b>Operator:</b> {alert['OPRNAME']}
+                        <div class="alert-card" style="border-left-color: {border_color};">
+                            <div style="display: flex; justify-content: space-between;">
+                                <span class="type-tag">{alert['DESCRIPTION']}</span>
+                                <small>{alert['SOURCETIMESTAMP']}</small>
                             </div>
-                            <div>
-                                <b>Lokasi:</b> {alert['AREA']}<br>
-                                <b>Koordinat:</b> {alert['LOCX']}, {alert['LOCY']}
+                            <div style="margin-top: 10px;">
+                                <span class="unit-tag">{alert['MACHINE']}</span> 
+                                <b>{alert['OPRNAME']}</b>
+                            </div>
+                            <div style="font-size: 13px; margin-top: 5px; color: #9ca3af;">
+                                📍 {alert['AREA']} ({alert['LOCX']}, {alert['LOCY']})
                             </div>
                         </div>
-                    </div>
                     """, unsafe_allow_html=True)
             
-            time.sleep(sim_speed)
+            time.sleep(interval)
     else:
-        st.info("Silakan klik 'Mulai Monitoring Simulasi' untuk melihat bagaimana alert bekerja.")
-        st.write("Preview Data Excel:")
-        st.dataframe(all_data.head(10))
+        with feed_placeholder:
+            st.info("Toggle 'Start Live Monitoring' di sidebar untuk simulasi.")
+            st.dataframe(data_all[['MACHINE', 'OPRNAME', 'DESCRIPTION', 'SOURCETIMESTAMP']].tail(10))
 
 except Exception as e:
-    st.error(f"Terjadi kesalahan: {e}")
-    st.warning("Pastikan file 'AbuseDummy.xlsx' sudah diupload ke folder yang sama di GitHub.")
+    st.error(f"Error: {e}")
